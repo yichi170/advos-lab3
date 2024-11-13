@@ -1,7 +1,15 @@
-#include "elf.h"
+#include "myelf.h"
+
+#include <fcntl.h> // open
+#include <unistd.h> // read
+#include <stdint.h>
 #include <stdlib.h> // EXIT_FAILURE
 #include <string.h> // memcmp
 #include <sys/mman.h> // mmap
+
+#include "lib.h"
+
+extern void err_quit(const char *msg);
 
 void load_elf_binary(const char *elf_file)
 {
@@ -29,7 +37,7 @@ void load_elf_binary(const char *elf_file)
 
 	lseek(fd, ehdr.e_phoff, SEEK_SET);
 	if (read(fd, phdrs, ehdr.e_phentsize * ehdr.e_phnum) !=
-		ehdr.e_phentsize * ehdr.e_phnum) {
+	    ehdr.e_phentsize * ehdr.e_phnum) {
 		free(phdrs);
 		close(fd);
 		err_quit("Reading program headers");
@@ -37,19 +45,45 @@ void load_elf_binary(const char *elf_file)
 
 	for (int i = 0; i < ehdr.e_phnum; i++) {
 		Elf64_Phdr *phdr = &phdrs[i];
-
 		if (phdr->p_type == PT_LOAD) {
 			void *segment_vaddr = (void *)phdr->p_vaddr;
 			size_t segment_size = phdr->p_memsz;
 			size_t segment_file_size = phdr->p_filesz;
-			void *mapped_mem = mmap(
-				segment_vaddr, segment_size,
-				((phdr->p_flags & PF_X ? PROT_EXEC : 0) |
-				 (phdr->p_flags & PF_W ? PROT_WRITE : 0) |
-				 (phdr->p_flags & PF_R ? PROT_READ : 0)),
-				MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+			void *mapped_mem = mmap(segment_vaddr, segment_size,
+						PROT_READ | PROT_WRITE,
+						MAP_PRIVATE | MAP_ANONYMOUS, -1,
+						0);
+
+			printf("segment_vaddr (ideal): %#lx\n",
+			       (uint64_t)segment_vaddr);
+			printf("mapped vaddr (actual): %#lx\n",
+			       (uint64_t)mapped_mem);
+
+			if (mapped_mem == MAP_FAILED) {
+				free(phdrs);
+				close(fd);
+				err_quit(
+					"mmap failed to allocate memory for segment");
+			}
+
+			lseek(fd, phdr->p_offset, SEEK_SET);
+			if (read(fd, mapped_mem, segment_file_size) !=
+			    segment_file_size) {
+				free(phdrs);
+				close(fd);
+				err_quit("Load segment to memory");
+			}
+
+			// zero-out the remaining segment space (.bss section)
+			if (segment_size > segment_file_size) {
+				memset((char *)mapped_mem + segment_file_size,
+				       0, segment_size - segment_file_size);
+			}
+
+			munmap(mapped_mem, segment_size);
 		}
 	}
 
-	return;
+	free(phdrs);
+	close(fd);
 }
