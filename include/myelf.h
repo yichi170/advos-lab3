@@ -3,6 +3,7 @@
 
 #include <elf.h>
 
-void load_elf_binary(const char *buf);
+Elf64_Phdr *parse_elf_headers(const char *buf, Elf64_Ehdr *ehdr);
+void setup_stack_exec(void *entry_point, char **argv, char **envp);
 
 #endif
