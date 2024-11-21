@@ -11,6 +11,5 @@ typedef struct elf_s {
 
 elf_t *parse_elf_headers(const char *buf);
 void setup_stack_exec(elf_t* elf, void *entry_point, char **argv, char **envp);
-unsigned long seek_main_tag(const char *elf_file, Elf64_Ehdr *ehdr);
 
 #endif

@@ -4,6 +4,7 @@
 #include <stdlib.h> // exit
 #include <sys/mman.h> // mmap
 #include <string.h>
+#include <assert.h>
 
 #include "myelf.h"
 #include "lib.h"
@@ -47,7 +48,13 @@ int main(int argc, char **argv, char **envp)
 			void *segment_vaddr = (void *)phdr->p_vaddr;
 			size_t segment_size = phdr->p_memsz;
 			size_t segment_file_size = phdr->p_filesz;
-			void *mapped_mem = mmap(segment_vaddr, segment_size,
+			uint64_t shifted_vaddr = phdr->p_vaddr & ~0xFFF;
+
+			uint64_t padding_size = phdr->p_vaddr - shifted_vaddr;
+			printf("==============================\n");
+			printf("padding size: %#lx\n", padding_size);
+
+			void *mapped_mem = mmap((void *)shifted_vaddr, segment_size + padding_size,
 						PROT_READ | PROT_WRITE | PROT_EXEC,
 						MAP_PRIVATE | MAP_ANONYMOUS, -1,
 						0);
@@ -58,10 +65,12 @@ int main(int argc, char **argv, char **envp)
 					"mmap failed to allocate memory for segment");
 			}
 
-			load_bias = (uint64_t)mapped_mem - (uint64_t)segment_vaddr;
+			void *mapped_ptr = (void *)((uint64_t)mapped_mem + padding_size);
+
+			assert((uint64_t)mapped_mem == shifted_vaddr);
 
 			lseek(fd, phdr->p_offset, SEEK_SET);
-			if (read(fd, mapped_mem, segment_file_size) !=
+			if (read(fd, mapped_ptr, segment_file_size) !=
 				segment_file_size) {
 				free(elf);
 				err_quit("Load segment to memory");
@@ -69,13 +78,21 @@ int main(int argc, char **argv, char **envp)
 
 			// zero-out the remaining segment space (.bss section)
 			if (segment_size > segment_file_size) {
-				memset((char *)mapped_mem + segment_file_size,
+				memset((char *)mapped_ptr + segment_file_size,
 					   0, segment_size - segment_file_size);
 			}
-			printf("load_bias: %#lx\n", load_bias);
-			printf("mapped_mem: %#lx\n", (uint64_t)mapped_mem);
-			printf("segment_vaddr: %#lx\n", (uint64_t)segment_vaddr);
-			printf("segment_size: %#lx\n", segment_size);
+
+			char flags[7];
+			sprintf(flags, "%c%c%c",
+				" r"[(phdr->p_flags & PF_R) != 0],
+				" w"[(phdr->p_flags & PF_W) != 0],
+				" x"[(phdr->p_flags & PF_X) != 0]);
+			printf("segment_flags [r/w/x]: %s\n", flags);
+			printf("segment vaddr specified in ELF: %#lx\n", (uint64_t)segment_vaddr);
+			printf("shifted segment vaddr: %#lx\n", (uint64_t)shifted_vaddr);
+			printf("writing data from this addr: %#lx\n", (uint64_t)mapped_ptr);
+			printf("segment mapped to this region: %#lx - %#lx\n", (uint64_t)mapped_mem, (uint64_t)mapped_mem + segment_size);
+			printf("==============================\n");
 
 			if (elf->ehdr.e_entry < (uint64_t)mapped_mem || elf->ehdr.e_entry > (uint64_t)mapped_mem + segment_size) {
 				printf("invalid entry point\n");
@@ -85,14 +102,12 @@ int main(int argc, char **argv, char **envp)
 	free(elf);
 	close(fd);
 
-	unsigned long main_addr = seek_main_tag(program, &elf->ehdr);
-
 	printf("entry point: %#lx\n", elf->ehdr.e_entry);
 	printf("shifted entry point: %#lx\n", elf->ehdr.e_entry + load_bias);
 	// printf("entry point: %#lx\n", (uint64_t)((void *)test_entry));
 
-	setup_stack_exec(elf, (void *)test_entry, argv + 1, envp);
-	// setup_stack_exec(elf, (void *)elf->ehdr.e_entry, argv + 1, envp);
+	// setup_stack_exec(elf, (void *)test_entry, argv + 1, envp);
+	setup_stack_exec(elf, (void *)elf->ehdr.e_entry, argv + 1, envp);
 
 	return 0;
 }

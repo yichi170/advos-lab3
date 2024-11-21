@@ -1,10 +1,14 @@
-all: test
+SRC := $(wildcard *.c)
+OBJ := $(SRC:.c=.o)
+EXEC := $(SRC:.c=)
 
-test: test_malloc.c
-	gcc $< -o $@
+all: $(EXEC)
+
+%: %.c linker.ld
+	gcc -g -o $@ $< -static -T linker.ld
 
 clean:
-	$(RM) ./test
+	$(RM) $(EXEC) $(OBJ)
 
-.PHONY: clean
+.PHONY: all clean
 

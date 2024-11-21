@@ -8,6 +8,7 @@
 #include <sys/mman.h> // mmap
 
 #include "lib.h"
+#include "stack_util.h"
 
 extern void err_quit(const char *msg);
 
@@ -85,61 +86,67 @@ void setup_stack_exec(elf_t* elf, void* entry_point, char** argv, char** envp) {
 	stack_ptr = stack_top + stack_size;
 
 	Elf64_auxv_t *auxp = (Elf64_auxv_t *)(envp + envc + 1);
+	int auxc = 0;
 	while (1) {
 		stack_ptr -= sizeof(Elf64_auxv_t);
-		memcpy(stack_ptr, auxp, sizeof(Elf64_auxv_t));
-		Elf64_auxv_t *stk_auxp = (Elf64_auxv_t *)stack_ptr;
+		auxc++;
 
-		if (auxp->a_type == AT_PHDR) {
-			stk_auxp->a_un.a_val = (uint64_t)elf->phdrs;
-		} else if (auxp->a_type == AT_PHNUM) {
-			stk_auxp->a_un.a_val = elf->ehdr.e_phnum;
-		} else if (auxp->a_type == AT_BASE) {
-			stk_auxp->a_un.a_val = 0;
-		} else if (auxp->a_type == AT_ENTRY) {
-			stk_auxp->a_un.a_val = elf->ehdr.e_entry;
-		} else if (auxp->a_type == AT_EXECFN) {
-			stk_auxp->a_un.a_val = (uint64_t)elf->filename;
-		} else if (auxp->a_type == AT_NULL) {// ensure AT_NULL is copied to the stack
+		// ensure AT_NULL will be copied to the stack
+		if (auxp->a_type == AT_NULL) {
 			break;
 		}
 		auxp++;
 	}
+	auxp = (Elf64_auxv_t *)(envp + envc + 1);
+	memcpy(stack_ptr, auxp, sizeof(Elf64_auxv_t) * auxc);
+
+	Elf64_auxv_t *stk_auxp = (Elf64_auxv_t *)stack_ptr;
+	while (stk_auxp->a_type != AT_NULL) {
+		// printf("stk_auxp: %#lx %#lx\n", stk_auxp->a_type, stk_auxp->a_un.a_val);
+		if (stk_auxp->a_type == AT_PHDR) {
+			stk_auxp->a_un.a_val = (uint64_t)elf->phdrs;
+		} else if (stk_auxp->a_type == AT_PHNUM) {
+			stk_auxp->a_un.a_val = elf->ehdr.e_phnum;
+		} else if (stk_auxp->a_type == AT_BASE) {
+			stk_auxp->a_un.a_val = 0;
+		} else if (stk_auxp->a_type == AT_ENTRY) {
+			stk_auxp->a_un.a_val = elf->ehdr.e_entry;
+		} else if (stk_auxp->a_type == AT_EXECFN) {
+			stk_auxp->a_un.a_val = (uint64_t)elf->filename;
+		}
+		// printf("stk_auxp: %#lx %#lx\n", stk_auxp->a_type, stk_auxp->a_un.a_val);
+		stk_auxp++;
+	}
 
 	stack_ptr -= sizeof(char *) * (envc + 1);
 	char **envp_stack = (char **)stack_ptr;
-	char **envp_ptr = envp_stack;
+	memcpy(envp_stack, envp, sizeof(char *) * (envc + 1));
 
 	stack_ptr -= sizeof(char *) * (argc + 1);
 	char **argv_stack = (char **)stack_ptr;
-	char **argv_ptr = argv_stack;
+	memcpy(argv_stack, argv, sizeof(char *) * (argc + 1));
 
 	stack_ptr -= sizeof(size_t);
 	*stack_ptr = argc;
 
-	for (char **env = envp; *env != NULL; ++env) {
-		*envp_ptr = *env;
-		envp_ptr++;
-	}
-	*envp_ptr = NULL;
-
-	for (char **arg = argv; *arg != NULL; ++arg) {
-		*argv_ptr = *arg;
-		++argv_ptr;
-	}
-	*argv_ptr = NULL;
-
 	stack_ptr = (char *)((uintptr_t)stack_ptr & ~0xF);
+
+	stack_check(stack_ptr, argc, argv);
 
 	printf("jump to entry point: %#lx\n", (uintptr_t)entry_point);
 
 	__asm__ volatile (
-		"mov x0, %2\n"
-		"mov x1, %3\n"
-		"mov x2, %4\n"
+		"mov x0, #0\n"
+		"mov x1, #0\n"
+		"mov x2, #0\n"
+		"mov x3, #0\n"
+		"mov x4, #0\n"
+		"mov x5, #0\n"
+		"mov x6, #0\n"
+		"mov x7, #0\n"
 		"mov sp, %0\n"
 		"br %1\n"
-		: : "r" (stack_ptr), "r" (entry_point), "r"(argc), "r"(argv_stack), "r"(envp_stack)
+		: : "r" (stack_ptr), "r" (entry_point)
 	);
 
 	err_quit("Should not reach here");
