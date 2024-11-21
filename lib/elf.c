@@ -11,14 +11,20 @@
 
 extern void err_quit(const char *msg);
 
-Elf64_Phdr *parse_elf_headers(const char *elf_file, Elf64_Ehdr *ehdr)
+elf_t *parse_elf_headers(const char *elf_file)
 {
 	int fd = open(elf_file, O_RDONLY);
 	if (fd == -1) {
 		err_quit("Open ELF format file");
 	}
 
-	if (read(fd, ehdr, sizeof(*ehdr)) != sizeof(*ehdr)) {
+	elf_t *elf = malloc(sizeof(elf_t));
+
+	elf->filename = malloc(strlen(elf_file) + 1);
+	strcpy(elf->filename, elf_file);
+
+	Elf64_Ehdr *ehdr = &elf->ehdr;
+	if (read(fd, ehdr, sizeof(Elf64_Ehdr)) != sizeof(Elf64_Ehdr)) {
 		close(fd);
 		err_quit("Read ELF header");
 	}
@@ -27,7 +33,8 @@ Elf64_Phdr *parse_elf_headers(const char *elf_file, Elf64_Ehdr *ehdr)
 		err_quit("This file is not in ELF format");
 	}
 
-	Elf64_Phdr *phdrs = malloc(ehdr->e_phentsize * ehdr->e_phnum);
+	elf->phdrs = malloc(ehdr->e_phentsize * ehdr->e_phnum);
+	Elf64_Phdr *phdrs = elf->phdrs;
 
 	if (!phdrs) {
 		close(fd);
@@ -44,10 +51,10 @@ Elf64_Phdr *parse_elf_headers(const char *elf_file, Elf64_Ehdr *ehdr)
 
 	close(fd);
 
-	return phdrs;
+	return elf;
 }
 
-void setup_stack_exec(void* entry_point, char** argv, char** envp) {
+void setup_stack_exec(elf_t* elf, void* entry_point, char** argv, char** envp) {
 	size_t argv_size = 0, envp_size = 0;
 	size_t argc = 0, envc = 0;
 	const int STACK_SIZE = 0x800000; // 8MB
@@ -77,32 +84,50 @@ void setup_stack_exec(void* entry_point, char** argv, char** envp) {
 
 	stack_ptr = stack_top + stack_size;
 
-	stack_ptr -= sizeof(size_t);
-	*stack_ptr = argc;
+	Elf64_auxv_t *auxp = (Elf64_auxv_t *)(envp + envc + 1);
+	while (1) {
+		stack_ptr -= sizeof(Elf64_auxv_t);
+		memcpy(stack_ptr, auxp, sizeof(Elf64_auxv_t));
+		Elf64_auxv_t *stk_auxp = (Elf64_auxv_t *)stack_ptr;
 
-	stack_ptr -= sizeof(char *) * (argc + 1);
-	char **argv_stack = (char **)stack_ptr;
-	char **argv_ptr = argv_stack;
+		if (auxp->a_type == AT_PHDR) {
+			stk_auxp->a_un.a_val = (uint64_t)elf->phdrs;
+		} else if (auxp->a_type == AT_PHNUM) {
+			stk_auxp->a_un.a_val = elf->ehdr.e_phnum;
+		} else if (auxp->a_type == AT_BASE) {
+			stk_auxp->a_un.a_val = 0;
+		} else if (auxp->a_type == AT_ENTRY) {
+			stk_auxp->a_un.a_val = elf->ehdr.e_entry;
+		} else if (auxp->a_type == AT_EXECFN) {
+			stk_auxp->a_un.a_val = (uint64_t)elf->filename;
+		} else if (auxp->a_type == AT_NULL) {// ensure AT_NULL is copied to the stack
+			break;
+		}
+		auxp++;
+	}
 
 	stack_ptr -= sizeof(char *) * (envc + 1);
 	char **envp_stack = (char **)stack_ptr;
 	char **envp_ptr = envp_stack;
 
-	for (char **arg = argv; *arg != NULL; ++arg) {
-		stack_ptr -= (strlen(*arg) + 1);
-		strcpy(stack_ptr, *arg);
-		*argv_ptr = stack_ptr;
-		++argv_ptr;
-	}
-	*argv_ptr = NULL;
+	stack_ptr -= sizeof(char *) * (argc + 1);
+	char **argv_stack = (char **)stack_ptr;
+	char **argv_ptr = argv_stack;
+
+	stack_ptr -= sizeof(size_t);
+	*stack_ptr = argc;
 
 	for (char **env = envp; *env != NULL; ++env) {
-		stack_ptr -= (strlen(*env) + 1); 	// strlen doesn't count '\0'
-		strcpy(stack_ptr, *env); 			// strcpy would copy '\0'
-		*envp_ptr = stack_ptr;
+		*envp_ptr = *env;
 		envp_ptr++;
 	}
 	*envp_ptr = NULL;
+
+	for (char **arg = argv; *arg != NULL; ++arg) {
+		*argv_ptr = *arg;
+		++argv_ptr;
+	}
+	*argv_ptr = NULL;
 
 	stack_ptr = (char *)((uintptr_t)stack_ptr & ~0xF);
 

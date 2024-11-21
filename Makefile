@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -O2 -Iinclude
+CFLAGS = -g -Wall -O2 -Iinclude
 
 LIB_SRC := $(wildcard lib/*.c)
 LIB_OBJ := $(LIB_SRC:%.c=%.o)
@@ -13,7 +13,7 @@ EXEC := $(SRC:.c=)
 all: $(EXEC)
 
 %: %.c $(LIB_OBJ)
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $^ -o $@ -static
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@

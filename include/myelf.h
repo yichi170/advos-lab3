@@ -3,7 +3,14 @@
 
 #include <elf.h>
 
-Elf64_Phdr *parse_elf_headers(const char *buf, Elf64_Ehdr *ehdr);
-void setup_stack_exec(void *entry_point, char **argv, char **envp);
+typedef struct elf_s {
+    char *filename;
+    Elf64_Ehdr  ehdr;
+    Elf64_Phdr  *phdrs;
+} elf_t;
+
+elf_t *parse_elf_headers(const char *buf);
+void setup_stack_exec(elf_t* elf, void *entry_point, char **argv, char **envp);
+unsigned long seek_main_tag(const char *elf_file, Elf64_Ehdr *ehdr);
 
 #endif

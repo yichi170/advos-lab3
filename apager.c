@@ -8,7 +8,8 @@
 #include "myelf.h"
 #include "lib.h"
 
-void test_entry(int argc, char **argv, char **envp) {
+void test_entry(int argc, char **argv, char **envp)
+{
 	printf("\n\nProgram started with argc: %d\n", argc);
 
 	for (int i = 0; i < argc; i++) {
@@ -31,8 +32,7 @@ int main(int argc, char **argv, char **envp)
 	char *program = argv[1];
 	printf("load program %s\n", program);
 
-	Elf64_Ehdr ehdr;
-	Elf64_Phdr *phdrs = parse_elf_headers(program, &ehdr);
+	elf_t *elf = parse_elf_headers(program);
 	uint64_t load_bias = 0;
 
 	int fd = open(program, O_RDONLY);
@@ -41,8 +41,8 @@ int main(int argc, char **argv, char **envp)
 	}
 
 	// load to memory
-	for (int i = 0; i < ehdr.e_phnum; i++) {
-		Elf64_Phdr *phdr = &phdrs[i];
+	for (int i = 0; i < elf->ehdr.e_phnum; i++) {
+		Elf64_Phdr *phdr = &elf->phdrs[i];
 		if (phdr->p_type == PT_LOAD) {
 			void *segment_vaddr = (void *)phdr->p_vaddr;
 			size_t segment_size = phdr->p_memsz;
@@ -53,7 +53,7 @@ int main(int argc, char **argv, char **envp)
 						0);
 
 			if (mapped_mem == MAP_FAILED) {
-				free(phdrs);
+				free(elf);
 				err_quit(
 					"mmap failed to allocate memory for segment");
 			}
@@ -63,7 +63,7 @@ int main(int argc, char **argv, char **envp)
 			lseek(fd, phdr->p_offset, SEEK_SET);
 			if (read(fd, mapped_mem, segment_file_size) !=
 				segment_file_size) {
-				free(phdrs);
+				free(elf);
 				err_quit("Load segment to memory");
 			}
 
@@ -72,19 +72,27 @@ int main(int argc, char **argv, char **envp)
 				memset((char *)mapped_mem + segment_file_size,
 					   0, segment_size - segment_file_size);
 			}
+			printf("load_bias: %#lx\n", load_bias);
 			printf("mapped_mem: %#lx\n", (uint64_t)mapped_mem);
 			printf("segment_vaddr: %#lx\n", (uint64_t)segment_vaddr);
 			printf("segment_size: %#lx\n", segment_size);
+
+			if (elf->ehdr.e_entry < (uint64_t)mapped_mem || elf->ehdr.e_entry > (uint64_t)mapped_mem + segment_size) {
+				printf("invalid entry point\n");
+			}
 		}
 	}
-	free(phdrs);
+	free(elf);
 	close(fd);
 
-	printf("entry point: %#lx\n", ehdr.e_entry);
+	unsigned long main_addr = seek_main_tag(program, &elf->ehdr);
+
+	printf("entry point: %#lx\n", elf->ehdr.e_entry);
+	printf("shifted entry point: %#lx\n", elf->ehdr.e_entry + load_bias);
 	// printf("entry point: %#lx\n", (uint64_t)((void *)test_entry));
 
-	// setup_stack_exec((void *)ehdr.e_entry, argv + 1, envp);
-	setup_stack_exec((void *)test_entry, argv + 1, envp);
+	setup_stack_exec(elf, (void *)test_entry, argv + 1, envp);
+	// setup_stack_exec(elf, (void *)elf->ehdr.e_entry, argv + 1, envp);
 
 	return 0;
 }
