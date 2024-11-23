@@ -22,5 +22,9 @@ lib_objs: $(LIB_OBJ)
 
 clean:
 	$(RM) $(EXEC) $(LIB_OBJ)
+	make clean -C test/
 
-.PHONY: all clean lib_objs
+test:
+	make -C test/
+
+.PHONY: all test clean lib_objs

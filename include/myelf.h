@@ -4,12 +4,13 @@
 #include <elf.h>
 
 typedef struct elf_s {
-    char *filename;
+    char* filename;
     Elf64_Ehdr  ehdr;
-    Elf64_Phdr  *phdrs;
+    Elf64_Phdr* phdrs;
+    int fd;
 } elf_t;
 
-elf_t *parse_elf_headers(const char *buf);
-void setup_stack_exec(elf_t* elf, void *entry_point, char **argv, char **envp);
+elf_t *parse_elf_headers(const char* buf);
+char *setup_stack(elf_t* elf, char** argv, char** envp);
 
 #endif
